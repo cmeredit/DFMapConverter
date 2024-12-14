@@ -23,7 +23,6 @@ To learn more about [Lua](https://www.lua.org/), see the [reference manual](http
 ## Usage
 1. Run Dwarf Fortress & DFHack, then open the DFHack console.
 2. Open one of your saved games.
-3. Choose a destination path and name for the exported file. Sorry for making you type a whole path, but I'm not sure how to use DFHack/Lua to get the path to the install folder :(
-4. Execute `export-to-nbt [your full path] [your filename without file extension] [optional flags]` in the DFHack console. This will generate an uncompressed `.nbt` file with the information necessary for building nice `.obj` meshes from your map.
-   1. By default, magma is excluded from generated fort meshes. This is because magma oceans often obscure interesting fort details if you have a deep magma smelter. If you want magma included in your fort meshes, set the `--include-magma` flag.
-   2. By default, this script assumes you want to be able to generate a mesh of just your fort (rather than all open spaces in your map, such as caves). If you don't care about getting a mesh of just your fort, you can set the `--only-open-tiles` flag to get a smaller file.
+3. Execute `export-to-nbt [optional flags]` in the DFHack console. This will generate an uncompressed `.nbt` file under `dfhack-config/mods/MapExporter/` in your DF install folder containing the information necessary for building nice `.obj` meshes from your map.
+   1. By default, magma is excluded from generated fort meshes. This is because magma oceans often obscure interesting fort details if you have a deep magma smelter. If you want magma included in your fort meshes, set the `--include-magma` or `-m` flag.
+   2. By default, this script assumes you want the ability to generate a mesh of just your fort (rather than all open spaces in your map, such as caves). If you don't care about getting a mesh of just your fort, you can set the `--only-open-tiles` or `-o` flag to get a smaller file.
