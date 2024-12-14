@@ -1,0 +1,8 @@
+[ID:MapExporter]
+[NUMERIC_VERSION:001]
+[DISPLAYED_VERSION:0.0.1]
+[EARLIEST_COMPATIBLE_NUMERIC_VERSION:001]
+[EARLIEST_COMPATIBLE_DISPLAYED_VERSION:0.0.1]
+[AUTHOR:Connor Meredith]
+[NAME:Map Exporter]
+[DESCRIPTION:Export the current map to an uncompressed .nbt file.]
