@@ -1,4 +1,4 @@
-#MapExporter
+# MapExporter
 
 This Lua project offers a script, `export-to-nbt.lua`, to dump a Dwarf Fortress map into an uncompressed .nbt file.
 
@@ -8,7 +8,7 @@ To learn more about the DFHack Lua API, see the [reference manual](https://docs.
 
 To learn more about [Lua](https://www.lua.org/), see the [reference manual](https://www.lua.org/manual/5.4/).
 
-##Installation
+## Installation
 1. Install [DFHack](https://docs.dfhack.org/en/stable/index.html). If you're using Steam, just install its [Steam version](https://store.steampowered.com/app/2346660/?snr=1_5_9__205). It will automatically launch once you run Dwarf Fortress.
 2. Locate your Dwarf Fortress install folder. If using Steam:
    1. Right click the game in your Steam library.
@@ -20,7 +20,7 @@ To learn more about [Lua](https://www.lua.org/), see the [reference manual](http
    1. Option 1: Copy this entire folder (`MapExporter`) to `data/installed_mods/` in your DF install folder.
    2. Option 2: Open `dfhack-config/script-paths.txt` and add `+/[path to this project]/DFMapConverter/MapExporter/scripts_modinstalled` in a new line at the end of the file.
 
-##Usage
+## Usage
 1. Run Dwarf Fortress & DFHack, then open the DFHack console.
 2. Open one of your saved games.
 3. Choose a destination path and name for the exported file. Sorry for making you type a whole path, but I'm not sure how to use DFHack/Lua to get the path to the install folder :(
