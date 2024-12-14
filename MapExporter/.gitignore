@@ -1,4 +1,6 @@
 # I don't think any of this is necessary for my simple Lua scripts, but might as well be safe, I guess?
+# Exclude Intellij specific stuff
+.idea/
 
 # Created by https://www.toptal.com/developers/gitignore/api/lua
 # Edit at https://www.toptal.com/developers/gitignore?templates=lua
