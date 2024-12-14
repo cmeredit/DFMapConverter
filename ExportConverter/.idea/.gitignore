@@ -1,0 +1,10 @@
+# Default ignored files
+/shelf/
+/workspace.xml
+
+#
+misc.xml
+runConfigurations.xml
+sbt.xml
+vcs.xml
+codeStyles/
