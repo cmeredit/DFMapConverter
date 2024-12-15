@@ -10,7 +10,7 @@ trait Tag {
   val typeName: String
 
   // By default, just return one string. Compound tags will return more.
-  def toPrettyStrings: Vector[String] = Vector(f"$typeName Tag $name: $payload")
+  def toPrettyStrings: Vector[String] = Vector(f"$name ($typeName): $payload")
 
   def printPretty(): Unit = toPrettyStrings foreach println
 }
