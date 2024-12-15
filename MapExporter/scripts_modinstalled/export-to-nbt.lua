@@ -52,34 +52,6 @@ local validArgs = {
     }
 }
 
--- Parses options from args and detects invalid options
-local function parseArguments()
-    for _, currentArgument in pairs(args) do
-
-        -- Until we find a valid matching argument, assume the argument is invalid
-        local argIsInvalid = true
-
-        -- Check the current argument against our list of valid args
-        for validArgKey in pairs(validArgs) do
-
-            -- If we find a match, set its flag and mark that the arg was not actually invalid
-            if (currentArgument == validArgs[validArgKey].shortForm or currentArgument == validArgs[validArgKey].longForm) then
-                validArgs[validArgKey].flag = true
-                argIsInvalid = false
-            end
-
-        end
-
-        -- If the argument was invalid, bail out early and just print an invalid args + help message
-        if argIsInvalid then
-            validArgs.invalidated.flag = true
-            break
-        end
-
-    end
-end
-
-
 -- Displays a help message with script options.
 local function displayHelpMessage()
 
@@ -102,30 +74,36 @@ local function displayHelpMessage()
 
 end
 
-
--- Returns the last 4 bytes of valueInt in order, again as ints
-local function getBytes(valueInt)
-
-    local remaining = valueInt
-
-    local byte0 = remaining % 256
-    remaining = remaining // 256
-
-    local byte1 = remaining % 256
-    remaining = remaining // 256
-
-    local byte2 = remaining % 256
-    remaining = remaining // 256
-
-    local byte3 = remaining % 256
-    remaining = remaining // 256
-
-    return byte3, byte2, byte1, byte0
-
-end
-
-
 local function main()
+
+
+    -- Parses options from args and detects invalid options
+    local function parseArguments()
+
+        for _, currentArgument in pairs(args) do
+
+            -- Until we find a valid matching argument, assume the argument is invalid
+            local argIsInvalid = true
+
+            -- Check the current argument against our list of valid args
+            for validArgKey in pairs(validArgs) do
+
+                -- If we find a match, set its flag and mark that the arg was not actually invalid
+                if (currentArgument == validArgs[validArgKey].shortForm or currentArgument == validArgs[validArgKey].longForm) then
+                    validArgs[validArgKey].flag = true
+                    argIsInvalid = false
+                end
+
+            end
+
+            -- If the argument was invalid, bail out early and just print an invalid args + help message
+            if argIsInvalid then
+                validArgs.invalidated.flag = true
+                break
+            end
+
+        end
+    end
 
     -- Parse arguments, then return early if the user entered an invalid flag or the help flag
     parseArguments()
@@ -139,10 +117,17 @@ local function main()
         return
     end
 
+
+
+
+
+
+
+
     -- Set up output data table.
     -- Assume every value in outputData is a table with a name (string), type (string), and value (any).
     -- This will be enough information to write the nbt file.
-    local outputData = {}
+    local outputDataBuffer = {}
 
     -- I don't really know how to deal with Lua's universal use of tables :(
     -- The reason I don't just use string keys is that I'm going to *prefer* if the nbt files are written in the same
@@ -152,10 +137,10 @@ local function main()
     local registeredOutputNames = {}
     local function getOutputDataFromName(nameStr)
 
-        for i=0, #outputData do
+        for i=0, #outputDataBuffer do
 
-            if (outputData[i].name == nameStr) then
-                return outputData[i]
+            if (outputDataBuffer[i].name == nameStr) then
+                return outputDataBuffer[i]
             end
 
         end
@@ -171,7 +156,7 @@ local function main()
         if not registeredOutputNames[nameStr] then
 
             -- Create new entry
-            outputData[nextOutputDataIndex] = {
+            outputDataBuffer[nextOutputDataIndex] = {
                 name = nameStr,
                 type = "Byte",
                 value = valueByte
@@ -185,10 +170,10 @@ local function main()
 
         -- Name is already registered, so go update the entry that already exists
         else
-            for i=0,#outputData do
-                if outputData[i].name == nameStr then
-                    outputData[i].type = "Byte"
-                    outputData[i].value = valueByte
+            for i=0,#outputDataBuffer do
+                if outputDataBuffer[i].name == nameStr then
+                    outputDataBuffer[i].type = "Byte"
+                    outputDataBuffer[i].value = valueByte
                     break
                 end
 
@@ -216,7 +201,7 @@ local function main()
             newEntry.value.writeIndex = newEntry.value.writeIndex + 1
 
             -- Set new entry in output data
-            outputData[nextOutputDataIndex] = newEntry
+            outputDataBuffer[nextOutputDataIndex] = newEntry
 
             -- Register name
             registeredOutputNames[nameStr] = true
@@ -227,10 +212,10 @@ local function main()
         else
 
             -- Name is already registered to a byte array. Append valueByte to that array and update its write index
-            for i=0,#outputData do
-                if outputData[i].name == nameStr then
-                    outputData[i].value.data[outputData[i].value.writeIndex] = valueByte
-                    outputData[i].value.writeIndex = outputData[i].value.writeIndex + 1
+            for i=0,#outputDataBuffer do
+                if outputDataBuffer[i].name == nameStr then
+                    outputDataBuffer[i].value.data[outputDataBuffer[i].value.writeIndex] = valueByte
+                    outputDataBuffer[i].value.writeIndex = outputDataBuffer[i].value.writeIndex + 1
                     break
                 end
             end
@@ -239,14 +224,8 @@ local function main()
 
     end
 
-
-
     -- Get and set map dimensions
     local xMax, yMax, zMax = dfhack.maps.getTileSize()
-    setByte("x", xMax)
-    setByte("y", yMax)
-    setByte("z", zMax)
-
 
     -- Based on the user's flags, change which data we copy / how we copy it
     -- It's probably more intuitive to check the flags within the copying loop, but that's quite a bit slower
@@ -254,224 +233,270 @@ local function main()
     local byteManagers = {}
     local dataRetrievalFuncs = {}
     local typesOfDataToRetrieve = {}
+    local function registerArrayDataOutputs()
+        local function registerDataOutput(nameStr, dataRetrievalFunc)
 
-    local function registerDataOutput(nameStr, dataRetrievalFunc)
+            local function registerByteManager(nameStr_unshadowed)
+                byteManagers[nameStr_unshadowed] = {
+                    numBitsWritten = 0,
+                    currentByte = 0
+                }
+            end
+            local function registerDataRetrievalType(nameStr_unshadowed)
+                typesOfDataToRetrieve[nameStr_unshadowed] = true
+            end
 
-        local function registerByteManager(nameStr)
-            byteManagers[nameStr] = {
-                numBitsWritten = 0,
-                currentByte = 0
-            }
+
+            registerDataRetrievalType(nameStr)
+            registerByteManager(nameStr)
+            dataRetrievalFuncs[nameStr] = dataRetrievalFunc
         end
-        local function registerDataRetrievalType(nameStr)
-            typesOfDataToRetrieve[nameStr] = true
+
+        -- Counterintuitively, if we want to include magma in the output meshes produced by ExportConverter, then were
+        -- actually do NOT want to write any magma data. The reason is that ExportConverter, by default, uses
+        -- the magma mask to exclude magma tiles. Without a magma mask, it is configured to assume there is no magma on the
+        -- map, thereby excluding nothing.
+        --
+        -- In summary, if the includeMagma flag is set, that means we DO NOT need to write magma data.
+        -- If the flag is not set, then magma needs to be taken into account in the mesh conversion, so we DO need to write magma data
+        if not validArgs.includeMagma.flag then
+            -- We need to write magma data so it can be excluded from the generated meshes
+
+            local dataRetrievalFunc = function(x_coord, y_coord, z_coord)
+                local designation, _ = dfhack.maps.getTileFlags(x_coord, y_coord, z_coord)
+                -- designation[0]: liquid level.
+                -- designation[21]: liquid type. Set to true if there is magma present (or in weird cases, seemingly randomly? e.g., I've seen a tile with a door no liquid have this set to "true")
+                -- Magma is present in the specified tile iff the tile has liquid of type "true"
+                return designation[21] and (designation[0] > 0)
+            end
+
+            registerDataOutput("magmaMask", dataRetrievalFunc)
+
         end
 
+        -- In its default mode, this script assumes that we need to generate a fort-only mesh (as well as maybe an open-spaces mesh).
+        -- The flood fill algorithm in ExportConverter needs to know which tiles are walkable and which are vertically passable (and needs to distinguish these).
+        -- If the user is not interested in generating a fort-only mesh for whatever reason, then we don't need to record the walkable and v-passable
+        -- info separately! The tiles considered "open" are exactly those that are walkable or vertically passable, so if the onlyOpen flag is set,
+        -- then we can record the disjunction of these in a single byte array.
+        if validArgs.onlyOpen.flag then
+            -- Only need to record an "open" byte array
 
-        registerDataRetrievalType(nameStr)
-        registerByteManager(nameStr)
-        dataRetrievalFuncs[nameStr] = dataRetrievalFunc
+            local dataRetrievalFunc = function(x_coord, y_coord, z_coord)
+                local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
+                local tileTypeAttributes = df.tiletype.attrs[tileType]
+                local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
+                return (tileShapeAttributes.walkable or tileShapeAttributes.passable_flow_down)
+            end
+
+            registerDataOutput("openTileMask", dataRetrievalFunc)
+
+        else
+            -- Need to record walkable and v-passable separately
+
+            local walkableDataRetrievalFunc = function(x_coord, y_coord, z_coord)
+                local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
+                local tileTypeAttributes = df.tiletype.attrs[tileType]
+                local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
+                return tileShapeAttributes.walkable
+            end
+
+            registerDataOutput("walkableMask", walkableDataRetrievalFunc)
+
+
+            local pfdDataRetrievalFunc = function(x_coord, y_coord, z_coord)
+                local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
+                local tileTypeAttributes = df.tiletype.attrs[tileType]
+                local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
+                return tileShapeAttributes.passable_flow_down
+            end
+
+            registerDataOutput("passableFlowDownMask", pfdDataRetrievalFunc)
+
+        end
     end
 
-    -- Counterintuitively, if we want to include magma in the output meshes produced by ExportConverter, then were
-    -- actually do NOT want to write any magma data. The reason is that ExportConverter, by default, uses
-    -- the magma mask to exclude magma tiles. Without a magma mask, it is configured to assume there is no magma on the
-    -- map, thereby excluding nothing.
-    --
-    -- In summary, if the includeMagma flag is set, that means we DO NOT need to write magma data.
-    -- If the flag is not set, then magma needs to be taken into account in the mesh conversion, so we DO need to write magma data
-    if not validArgs.includeMagma.flag then
-        -- We need to write magma data so it can be excluded from the generated meshes
+    local function fillBufferWithArrayOutputs()
+        -- Copy relevant game data into outputData
+        -- Note that the number of blocks in a dwarf fortress map is always divisible by 8, so we don't need to
+        -- worry about having lingering bits to write at the end of this loop. E.g., if a map somehow had 9 tiles,
+        -- at the end of this loop we would have only written 9//8=1 byte (one missing bit!)
+        for z = 0, zMax - 1 do
+            for y = 0, yMax - 1 do
+                for x = 0, xMax - 1 do
+                    for dataOutputName in pairs(typesOfDataToRetrieve) do
 
-        local dataRetrievalFunc = function(x_coord, y_coord, z_coord)
-            local designation, _ = dfhack.maps.getTileFlags(x_coord, y_coord, z_coord)
-            -- designation[0]: liquid level.
-            -- designation[21]: liquid type. Set to true if there is magma present (or in weird cases, seemingly randomly? e.g., I've seen a tile with a door no liquid have this set to "true")
-            -- Magma is present in the specified tile iff the tile has liquid of type "true"
-            return designation[21] and (designation[0] > 0)
-        end
+                        -- Get next bit and current byte so far
+                        local nextBit = dataRetrievalFuncs[dataOutputName](x, y, z)
+                        local currentByte = byteManagers[dataOutputName].currentByte
+                        local numBitsWritten = byteManagers[dataOutputName].numBitsWritten
 
-        registerDataOutput("magmaMask", dataRetrievalFunc)
+                        -- Always assume that the byte manager has left room for the next bit!
+                        -- It's our responsibility to make sure of this.
 
-    end
+                        -- Write the next byte and update bit count
+                        currentByte = currentByte + (nextBit and 1 or 0)
+                        numBitsWritten = numBitsWritten + 1
 
-    -- In its default mode, this script assumes that we need to generate a fort-only mesh (as well as maybe an open-spaces mesh).
-    -- The flood fill algorithm in ExportConverter needs to know which tiles are walkable and which are vertically passable (and needs to distinguish these).
-    -- If the user is not interested in generating a fort-only mesh for whatever reason, then we don't need to record the walkable and v-passable
-    -- info separately! The tiles considered "open" are exactly those that are walkable or vertically passable, so if the onlyOpen flag is set,
-    -- then we can record the disjunction of these in a single byte array.
-    if validArgs.onlyOpen.flag then
-        -- Only need to record an "open" byte array
-
-        local dataRetrievalFunc = function(x_coord, y_coord, z_coord)
-            local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
-            local tileTypeAttributes = df.tiletype.attrs[tileType]
-            local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
-            return (tileShapeAttributes.walkable or tileShapeAttributes.passable_flow_down)
-        end
-
-        registerDataOutput("openTileMask", dataRetrievalFunc)
-
-    else
-        -- Need to record walkable and v-passable separately
-
-        local walkableDataRetrievalFunc = function(x_coord, y_coord, z_coord)
-            local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
-            local tileTypeAttributes = df.tiletype.attrs[tileType]
-            local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
-            return tileShapeAttributes.walkable
-        end
-
-        registerDataOutput("walkableMask", walkableDataRetrievalFunc)
+                        -- If the current byte has been filled, then write it to the appropriate output array,
+                        -- then reset the byte manager.
+                        --
+                        -- If the current byte has not been filled, then bitshift the current byte to make room
+                        -- for the next bit and then write back to the byte manager
+                        if numBitsWritten == 8 then
+                            -- Write to the appropriate output array
+                            appendToByteArray(dataOutputName, currentByte)
+                            -- Reset byte manager
+                            byteManagers[dataOutputName].currentByte = 0
+                            byteManagers[dataOutputName].numBitsWritten = 0
+                        else
+                            -- Bitshift currentByte to the left to make room for the next bit.
+                            currentByte = currentByte * 2
+                            byteManagers[dataOutputName].currentByte = currentByte
+                            byteManagers[dataOutputName].numBitsWritten = numBitsWritten
+                        end
 
 
-        local pfdDataRetrievalFunc = function(x_coord, y_coord, z_coord)
-            local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
-            local tileTypeAttributes = df.tiletype.attrs[tileType]
-            local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
-            return tileShapeAttributes.passable_flow_down
-        end
-
-        registerDataOutput("passableFlowDownMask", pfdDataRetrievalFunc)
-
-    end
-
-
-
-
-    -- Copy relevant game data into outputData
-    -- Note that the number of blocks in a dwarf fortress map is always divisible by 8, so we don't need to
-    -- worry about having lingering bits to write at the end of this loop. E.g., if a map somehow had 9 tiles,
-    -- at the end of this loop we would have only written 9//8=1 byte (one missing bit!)
-    for z = 0, zMax - 1 do
-        for y = 0, yMax - 1 do
-            for x = 0, xMax - 1 do
-                for dataOutputName in pairs(typesOfDataToRetrieve) do
-
-                    -- Get next bit and current byte so far
-                    local nextBit = dataRetrievalFuncs[dataOutputName](x, y, z)
-                    local currentByte = byteManagers[dataOutputName].currentByte
-                    local numBitsWritten = byteManagers[dataOutputName].numBitsWritten
-
-                    -- Always assume that the byte manager has left room for the next bit!
-                    -- It's our responsibility to make sure of this.
-
-                    -- Write the next byte and update bit count
-                    currentByte = currentByte + (nextBit and 1 or 0)
-                    numBitsWritten = numBitsWritten + 1
-
-                    -- If the current byte has been filled, then write it to the appropriate output array,
-                    -- then reset the byte manager.
-                    --
-                    -- If the current byte has not been filled, then bitshift the current byte to make room
-                    -- for the next bit and then write back to the byte manager
-                    if numBitsWritten == 8 then
-                        -- Write to the appropriate output array
-                        appendToByteArray(dataOutputName, currentByte)
-                        -- Reset byte manager
-                        byteManagers[dataOutputName].currentByte = 0
-                        byteManagers[dataOutputName].numBitsWritten = 0
-                    else
-                        -- Bitshift currentByte to the left to make room for the next bit.
-                        currentByte = currentByte * 2
-                        byteManagers[dataOutputName].currentByte = currentByte
-                        byteManagers[dataOutputName].numBitsWritten = numBitsWritten
                     end
-
-
                 end
             end
         end
     end
 
+    local function exportOutputDataBufferToFile(printSuccessMessage)
 
 
+        -- Returns the last 4 bytes of valueInt in order, again as ints
+        local function getBytes(valueInt)
 
+            local remaining = valueInt
 
+            local byte0 = remaining % 256
+            remaining = remaining // 256
 
+            local byte1 = remaining % 256
+            remaining = remaining // 256
 
+            local byte2 = remaining % 256
+            remaining = remaining // 256
 
-    -- Open, write, and close output file ---------------------
+            local byte3 = remaining % 256
+            remaining = remaining // 256
 
-    -- Set up output filename. Always include a datetime string. Include a nonempty options string if option flags were set.
-    local time = os.date("*t")
-    local datetimeStr = time.year .. "-" .. time.month .. "-" .. time.day .. " " .. time.hour .. ":" .. time.min .. ":" .. time.sec
-    local optionsStr = ""
-    if validArgs.includeMagma.flag then optionsStr = optionsStr .. " -m" end
-    if validArgs.onlyOpen.flag then optionsStr = optionsStr .. " -o" end
-    if optionsStr ~= "" then optionsStr = " - with options" .. optionsStr end
-
-    -- Open
-    local f = io.open(statePath .. "/df map export - " .. datetimeStr .. optionsStr .. ".nbt", "wb")
-
-    local function writeByte(byteInt)
-        f:write(string.char(byteInt))
-    end
-
-
-    -- Set up Compound tag
-    -- 10 is the magic number for the Compound tag type ID
-    writeByte(10)
-    -- I'm going to just call the compound tag "root", which has four characters.
-    -- The .nbt format expects 2 unsigned bytes to indicate the name length
-    writeByte(0)
-    writeByte(4)
-    f:write("root")
-
-    -- Write actual output data
-    for i=0,#outputData do
-        local v = outputData[i]
-
-        -- Write Tag Type ID byte
-        if v.type == "Byte" then
-
-            -- 1 is the magic number for byte tags
-            writeByte(1)
-
-        elseif v.type == "ByteArray" then
-
-            -- 7 is the magic number for byte array tags
-            writeByte(7)
+            return byte3, byte2, byte1, byte0
 
         end
 
 
-        -- Write the name length bytes
-        -- Ints are 64 bits / 8 bytes in Lua. The .nbt format expects 2 unsigned bytes to indicate the name length
-        local _, _, highByte, lowByte = getBytes(string.len(v.name))
-        writeByte(highByte)
-        writeByte(lowByte)
+        -- Open, write, and close output file ---------------------
 
-        -- Write the name bytes
-        f:write(v.name)
+        -- Set up output filename. Always include a datetime string. Include a nonempty options string if option flags were set.
+        local time = os.date("*t")
+        local datetimeStr = time.year .. "-" .. time.month .. "-" .. time.day .. " " .. time.hour .. ":" .. time.min .. ":" .. time.sec
+        local optionsStr = ""
+        if validArgs.includeMagma.flag then optionsStr = optionsStr .. " -m" end
+        if validArgs.onlyOpen.flag then optionsStr = optionsStr .. " -o" end
+        if optionsStr ~= "" then optionsStr = " - with options" .. optionsStr end
 
-        -- Write the payload
-        if v.type == "Byte" then
+        local path = statePath .. "df map export - " .. datetimeStr .. optionsStr .. ".nbt"
 
-            -- Single byte in payload
-            writeByte(v.value)
+        -- Open
+        local f = io.open(path, "wb")
 
-        elseif v.type == "ByteArray" then
+        local function writeByte(byteInt)
+            f:write(string.char(byteInt))
+        end
 
-            -- Payload consists of 4 bytes indicating the array length, then the bytes of the array.
-            local byte3, byte2, byte1, byte0 = getBytes(v.value.writeIndex)
-            writeByte(byte3)
-            writeByte(byte2)
-            writeByte(byte1)
-            writeByte(byte0)
-            for i=0,#v.value.data do
-                writeByte(v.value.data[i])
+
+        -- Set up Compound tag
+        -- 10 is the magic number for the Compound tag type ID
+        writeByte(10)
+        -- I'm going to just call the compound tag "root", which has four characters.
+        -- The .nbt format expects 2 unsigned bytes to indicate the name length
+        writeByte(0)
+        writeByte(4)
+        f:write("root")
+
+        -- Write actual output data
+        for outputDataBufferIndex = 0, #outputDataBuffer do
+            local v = outputDataBuffer[outputDataBufferIndex]
+
+            -- Write Tag Type ID byte
+            if v.type == "Byte" then
+
+                -- 1 is the magic number for byte tags
+                writeByte(1)
+
+            elseif v.type == "ByteArray" then
+
+                -- 7 is the magic number for byte array tags
+                writeByte(7)
+
+            end
+
+
+            -- Write the name length bytes
+            -- Ints are 64 bits / 8 bytes in Lua. The .nbt format expects 2 unsigned bytes to indicate the name length
+            local _, _, highByte, lowByte = getBytes(string.len(v.name))
+            writeByte(highByte)
+            writeByte(lowByte)
+
+            -- Write the name bytes
+            f:write(v.name)
+
+            -- Write the payload
+            if v.type == "Byte" then
+
+                -- Single byte in payload
+                writeByte(v.value)
+
+            elseif v.type == "ByteArray" then
+
+                -- Payload consists of 4 bytes indicating the array length, then the bytes of the array.
+                local byte3, byte2, byte1, byte0 = getBytes(v.value.writeIndex)
+                writeByte(byte3)
+                writeByte(byte2)
+                writeByte(byte1)
+                writeByte(byte0)
+                for byteArrayIndex = 0, #v.value.data do
+                    writeByte(v.value.data[byteArrayIndex])
+                end
+
             end
 
         end
 
+        -- Write the TAG_End tag ID
+        writeByte(0)
+
+        -- Close
+        f:close()
+
+        if printSuccessMessage then
+            print("Successfully exported current map to", path)
+        end
+
     end
 
-    -- Write the TAG_End tag ID
-    writeByte(0)
 
-    -- Close
-    f:close()
+
+
+
+
+
+
+    -- We will always want to output the map dimensions
+    setByte("x", xMax)
+    setByte("y", yMax)
+    setByte("z", zMax)
+    -- Using the arguments provided by the user, plan which types of data we'll gather and how.
+    registerArrayDataOutputs()
+    -- Read a bunch of data from the game
+    fillBufferWithArrayOutputs()
+    -- Write all the buffered data to a .nbt file with dynamically determined name (based on datetime and run arguments)
+    exportOutputDataBufferToFile(true)
+
+
 end
 
 main()
