@@ -1,0 +1,7 @@
+package io.github.cmeredit.nbt.tags
+
+case class LongTag(name: String, payload: Long) extends Tag {
+  type A = Long
+
+  override val typeName: String = Identifiers.TypeNames.long
+}
