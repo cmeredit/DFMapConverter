@@ -3,7 +3,7 @@ package io.github.cmeredit.nbt.tags
 case class CompoundTag(name: String, payload: Vector[Tag]) extends Tag {
   type A = Vector[Tag]
 
-  override val typeName: String = Identifiers.TypeNames.compound
+  override val typeName: String = MagicNumbers.TypeNames.compound
 
   override def toPrettyStrings: Vector[String] = {
 

@@ -9,5 +9,5 @@ package io.github.cmeredit.nbt.tags
 case class ListTag(name: String, payload: Vector[Tag]) extends Tag {
   type A = Vector[Tag]
 
-  override val typeName: String = Identifiers.TypeNames.list
+  override val typeName: String = MagicNumbers.TypeNames.list
 }

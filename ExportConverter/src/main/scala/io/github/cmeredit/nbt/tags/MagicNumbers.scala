@@ -2,7 +2,7 @@ package io.github.cmeredit.nbt.tags
 
 // Record magic values in one place.
 // Magic values are inherently ugly. I prefer to just write some icky laborious code one time and forget about it.
-object Identifiers {
+object MagicNumbers {
 
   // Type names that I personally like
   object TypeNames {
