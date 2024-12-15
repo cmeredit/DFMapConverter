@@ -57,4 +57,26 @@ object MagicNumbers {
 
   }
 
+  // Record number of bytes in the fixed portion of the payload of each tag type.
+  // For simple types, this is exactly the payload size.
+  // For container types, this bit of the payload specifies the container size.
+  object InitialPayloadSizes {
+
+    val tagIDToInitialPayloadSize: Map[Int, Int] = Map(
+      TagIDs.byte      -> 1,
+      TagIDs.short     -> 2,
+      TagIDs.int       -> 4,
+      TagIDs.long      -> 8,
+      TagIDs.float     -> 4,
+      TagIDs.double    -> 8,
+      TagIDs.byteArray -> 4,
+      TagIDs.string    -> 2,
+      TagIDs.list      -> 5,
+      TagIDs.compound  -> 0,
+      TagIDs.intArray  -> 4,
+      TagIDs.longArray -> 4,
+    )
+
+  }
+
 }
