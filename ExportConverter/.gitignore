@@ -1,3 +1,6 @@
+# I want a private sandbox directory.
+IgnoredSandbox/
+
 # Created by https://www.toptal.com/developers/gitignore/api/sbt,scala,intellij
 # Edit at https://www.toptal.com/developers/gitignore?templates=sbt,scala,intellij
 
