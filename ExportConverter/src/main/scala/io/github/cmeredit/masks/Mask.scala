@@ -1,4 +1,4 @@
-package io.github.cmeredit.game_map
+package io.github.cmeredit.masks
 
 // Provides convenience methods for mask data stored as a 1-Dim container of numerical values
 case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
@@ -58,7 +58,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     // Note that the bitIndexWithinShort is between 0 and 15 (shortSizeBits-1).
     // For example, if we're retrieving bit 15, then it's already at the least significant digit, so don't need to shift
     // Most significant digit (index 0) would need to be shifted 15 bits.
-    val targetBit = (targetShort >> ((shortSizeBits-1) - bitIndexWithinShort)) & 1
+    val targetBit = (targetShort >> ((shortSizeBits - 1) - bitIndexWithinShort)) & 1
 
     targetBit
   }
@@ -71,12 +71,17 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   // Convenience functions for applying element-wise operations between masks.
   // I only define a single unary operation, which just flips each mask bit.
   def neg(): Mask = Mask(data.map(s => (~s).toShort), xDim, yDim, zDim)
+
   // Standard logical operations and applyOp, which makes it easier to define nonstandard ops as well.
   // For example, you could write something like m1.implies(m2) as m1.applyOp(m2, (s1, s2) => (~s1 | s2).toShort).
-  def applyOp(other: Mask, op: (Short, Short) => Short): Mask = Mask(data.zip(other.data).map({case (s1, s2) => op(s1, s2)}), xDim, yDim, zDim)
+  def applyOp(other: Mask, op: (Short, Short) => Short): Mask = Mask(data.zip(other.data).map({ case (s1, s2) => op(s1, s2) }), xDim, yDim, zDim)
+
   def or(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 | s2).toShort)
+
   def and(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 & s2).toShort)
+
   def xor(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 ^ s2).toShort)
+
   def iff(other: Mask): Mask = (this xor other).neg()
 
   // Returns a copy of the current mask that has been shifted up one z coordinate / xy layer.
@@ -168,7 +173,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     }
 
     // Shifting *up* in y, so each replacement row should be placed at the *bottom* of its xy layer
-    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({case (retained, replacement) => replacement ++ retained}).toVector
+    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({ case (retained, replacement) => replacement ++ retained }).toVector
 
     // New mask has the same dimensions as the original.
     Mask(combinedData, xDim, yDim, zDim)
@@ -203,7 +208,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     }
 
     // Shifting *down* in y, so each replacement row should be placed at the *top* of its xy layer
-    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({case (retained, replacement) => retained ++ replacement}).toVector
+    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({ case (retained, replacement) => retained ++ replacement }).toVector
 
     // New mask has the same dimensions as the original.
     Mask(combinedData, xDim, yDim, zDim)
@@ -245,6 +250,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
       // Converts a short to the corresponding unsigned int.
       def getUInt(short: Short): Int = short & 0xFFFF
+
       // Right shifts a short without dragging the sign bit
       // Note that this is always used with further bitwise operations, so don't convert back to a short quite yet.
       def rightshiftUShort(short: Short): Int = getUInt(short) >> 1
@@ -258,7 +264,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
       // In the fold, we'll take each subsequent short, shift it, update its first bit depending on the previous carry flag, and set the next carry flag.
       val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
 
-      val shiftedXRow: Vector[Short] = xRow.tail.foldLeft[Vector[(Short, Boolean)]](initUpdatedRow)({case (curUpdatedRow, nextShort) =>
+      val shiftedXRow: Vector[Short] = xRow.tail.foldLeft[Vector[(Short, Boolean)]](initUpdatedRow)({ case (curUpdatedRow, nextShort) =>
 
         val previousCarryFlag: Boolean = curUpdatedRow.last._2
         val newHighBit: Int = if (previousCarryFlag) 0x8000 else 0x0000
@@ -268,7 +274,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
         curUpdatedRow.appended((updatedNextShort, nextCarry))
 
-      }).map({case (updatedShort, _ /*Carry info (which can now be forgotten)*/) => updatedShort})
+      }).map({ case (updatedShort, _ /*Carry info (which can now be forgotten)*/ ) => updatedShort })
 
       shiftedXRow
 
@@ -312,8 +318,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
       val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
 
 
-
-      val shiftedXRow: Vector[Short] = xRow.dropRight(1).foldRight[Vector[(Short, Boolean)]](initUpdatedRow)({case (nextShort, curUpdatedRow) =>
+      val shiftedXRow: Vector[Short] = xRow.dropRight(1).foldRight[Vector[(Short, Boolean)]](initUpdatedRow)({ case (nextShort, curUpdatedRow) =>
 
         val previousCarryFlag: Boolean = curUpdatedRow.head._2
         val newLowBit: Int = if (previousCarryFlag) 1 else 0
@@ -323,7 +328,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
         curUpdatedRow.prepended((updatedNextShort, nextCarry))
 
-      }).map({case (updatedShort, _ /*Carry info (which can now be forgotten)*/) => updatedShort})
+      }).map({ case (updatedShort, _ /*Carry info (which can now be forgotten)*/ ) => updatedShort })
 
       shiftedXRow
 
@@ -336,7 +341,6 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     Mask(updatedData, xDim, yDim, zDim)
 
   }
-
 
 
 }

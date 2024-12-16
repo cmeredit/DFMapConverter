@@ -1,5 +1,6 @@
 package io.github.cmeredit.game_map
 
+import io.github.cmeredit.masks.Mask
 import io.github.cmeredit.nbt._
 import tags._
 
