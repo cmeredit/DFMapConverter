@@ -47,10 +47,10 @@ object GameMap {
       if (payloadMap.contains(name)) {
         Some({
           payloadMap(name) match {
-            case ByteArrayTag(_, payload) => Mask(byteVecToShortVec(payload))
+            case ByteArrayTag(_, payload) => Mask(byteVecToShortVec(payload), xTileSize, yTileSize, zTileSize)
             case _ =>
               assert(assertion = false, f"'$name' tag loaded from .nbt file was not a byte array.")
-              Mask(Vector())
+              Mask(Vector(), xTileSize, yTileSize, zTileSize)
           }
         })
       } else None
