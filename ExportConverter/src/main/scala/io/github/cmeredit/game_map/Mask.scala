@@ -54,6 +54,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     val bitIndexWithinShort: Int = bitIndex % shortSizeBits
 
     // Shift the target bit all the way to the right, then mask to it. Signed-right-bit-shift smears the sign bit. E.g., (0b1000 >> 3) == 0b1111, not 0b0001.
+    // Also, the bitshift operators are only defined for ints, so there's an implicit conversion happening here too. Thankfully, we don't need to deal with that (high bit stays the same)
     // Note that the bitIndexWithinShort is between 0 and 15 (shortSizeBits-1).
     // For example, if we're retrieving bit 15, then it's already at the least significant digit, so don't need to shift
     // Most significant digit (index 0) would need to be shifted 15 bits.
@@ -208,5 +209,134 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     Mask(combinedData, xDim, yDim, zDim)
 
   }
+
+  // Returns a copy of the current mask that has been shifted up one x coordinate / yz layer.
+  // The copy does not contain the highest yz layer of the original mask.
+  // The lowest yz layer in the copy is determined by the extension method argument.
+  def shiftedUpX(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
+
+    // This is going to be the worst of all the shifting methods.
+    // The reason is that no individual short needs to be changed in the y or z shifting methods.
+    // However, since each short is a collection of x-aligned mask values, we need to shift bits
+    // within each short, and also carry bits between successive shorts (not passing xRow boundaries).
+
+    // I'm not sure if this is the best implementation, but I think this is going to be fairly slow
+    // no matter what I do.
+
+    // Unlike before, we're not going to make a clear "retained" and "replacement".
+    // Instead, we're going to group by x row, operate on that row, and flatten.
+
+    val xRows: Iterator[Vector[Short]] = data.grouped(xRowSizeShorts)
+    val updatedXRows: Iterator[Vector[Short]] = xRows.map(xRow => {
+
+      // To shift this x row up, we need to shift every bit up, carrying bits between successive shorts.
+      // We'll replace the very first bit depending on the extension method, and lose the very last bit of the last short no matter what.
+      // This seems like the work of a fold!
+
+      val firstShort: Short = xRow.head
+
+      val setFirstBitMask: Int = extensionMethod match {
+        // 0b 0000 0000 0000 0000 0000 0000 0000 0000
+        case BoundaryOptions.AllFalse => 0x0000
+        // 0b 0000 0000 0000 0000 1000 0000 0000 0000
+        case BoundaryOptions.AllTrue => 0xF000
+        case BoundaryOptions.CopyBoundary => 0xF000 & firstShort
+      }
+
+      // Converts a short to the corresponding unsigned int.
+      def getUInt(short: Short): Int = short & 0xFFFF
+      // Right shifts a short without dragging the sign bit
+      // Note that this is always used with further bitwise operations, so don't convert back to a short quite yet.
+      def rightshiftUShort(short: Short): Int = getUInt(short) >> 1
+
+      // Shift the first short, then set it with the boundary replacement
+      val firstUpdatedShort: Short = (rightshiftUShort(firstShort) | setFirstBitMask).toShort
+      val firstCarry: Boolean = (firstShort & 1) == 1
+
+      // Prepare for the fold.
+      // We'll start with the first updated short and a flag for whether we need to carry its lowest bit.
+      // In the fold, we'll take each subsequent short, shift it, update its first bit depending on the previous carry flag, and set the next carry flag.
+      val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
+
+      val shiftedXRow: Vector[Short] = xRow.tail.foldLeft[Vector[(Short, Boolean)]](initUpdatedRow)({case (curUpdatedRow, nextShort) =>
+
+        val previousCarryFlag: Boolean = curUpdatedRow.last._2
+        val newHighBit: Int = if (previousCarryFlag) 0xF000 else 0x0000
+
+        val updatedNextShort: Short = (rightshiftUShort(nextShort) | newHighBit).toShort
+        val nextCarry: Boolean = (nextShort & 1) == 1
+
+        curUpdatedRow.appended((updatedNextShort, nextCarry))
+
+      }).map({case (updatedShort, _ /*Carry info (which can now be forgotten)*/) => updatedShort})
+
+      shiftedXRow
+
+    })
+
+    // Traverse the iterator and put the results in a vector
+    val updatedData = updatedXRows.flatten.toVector
+
+    // New mask has the same dimensions as the original.
+    Mask(updatedData, xDim, yDim, zDim)
+
+  }
+
+
+  // Returns a copy of the current mask that has been shifted down one x coordinate / yz layer.
+  // The copy does not contain the lowest yz layer of the original mask.
+  // The highest yz layer in the copy is determined by the extension method argument.
+  def shiftedDownX(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
+
+    // We will take the same approach as in shiftedUpX, so it may be useful to read the comments there.
+    // The main difference in shifting down is that to process each x row, we work from right to left.
+
+    val xRows: Iterator[Vector[Short]] = data.grouped(xRowSizeShorts)
+    val updatedXRows: Iterator[Vector[Short]] = xRows.map(xRow => {
+
+      val firstShortToProcess: Short = xRow.last
+
+      val setLastBitMask: Int = extensionMethod match {
+        case BoundaryOptions.AllFalse => 0
+        case BoundaryOptions.AllTrue => 1
+        case BoundaryOptions.CopyBoundary => firstShortToProcess & 1
+      }
+
+      // Shift the first short, then set it with the boundary replacement
+      val firstUpdatedShort: Short = ((firstShortToProcess << 1) | setLastBitMask).toShort
+      val firstCarry: Boolean = (firstShortToProcess & 0xF000) == 0xF000
+
+      // Prepare for the fold. Careful, we're folding from right to left
+      // We'll start with the first updated short and a flag for whether we need to carry its highest bit.
+      // In the fold, we'll take each preceding short, shift it, update its last bit depending on the previous carry flag, and set the next carry flag.
+      val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
+
+
+
+      val shiftedXRow: Vector[Short] = xRow.tail.foldRight[Vector[(Short, Boolean)]](initUpdatedRow)({case (nextShort, curUpdatedRow) =>
+
+        val previousCarryFlag: Boolean = curUpdatedRow.head._2
+        val newLowBit: Int = if (previousCarryFlag) 1 else 0
+
+        val updatedNextShort: Short = ((nextShort << 1) | newLowBit).toShort
+        val nextCarry: Boolean = (nextShort & 0xF000) == 0xF000
+
+        curUpdatedRow.prepended((updatedNextShort, nextCarry))
+
+      }).map({case (updatedShort, _ /*Carry info (which can now be forgotten)*/) => updatedShort})
+
+      shiftedXRow
+
+    })
+
+    // Traverse the iterator and put the results in a vector
+    val updatedData = updatedXRows.flatten.toVector
+
+    // New mask has the same dimensions as the original.
+    Mask(updatedData, xDim, yDim, zDim)
+
+  }
+
+
 
 }
