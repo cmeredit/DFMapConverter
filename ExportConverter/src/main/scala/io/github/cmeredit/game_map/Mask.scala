@@ -85,16 +85,26 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   // As another example, with the method "CopyBoundary", the bottom xy layer of the returned mask is the same as in the original mask.
   def shiftedUpZ(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
     import BoundaryOptions._
-    extensionMethod match {
-      case AllTrue =>
-        val replacement: Short = 0xFFFF.toShort
-        Mask(Vector.fill(xyLayerSizeShorts)(replacement) ++ data.dropRight(xyLayerSizeShorts), xDim, yDim, zDim)
-      case AllFalse =>
-        val replacement: Short = 0x0000.toShort
-        Mask(Vector.fill(xyLayerSizeShorts)(replacement) ++ data.dropRight(xyLayerSizeShorts), xDim, yDim, zDim)
-      case CopyBoundary =>
-        Mask(data.take(xyLayerSizeShorts) ++ data.dropRight(xyLayerSizeShorts), xDim, yDim, zDim)
+
+    // This is the portion of the data that gets directly copied to the new mask.
+    // The top xy layer is not retained, so we drop that number of shorts from the end of the current data (which is arranged by xy layers anyway)
+    val retainedData: Vector[Short] = data.dropRight(xyLayerSizeShorts)
+
+    // We also need to determine what data makes up the bottom xy layer of the new mask.
+    // Whatever method we use, it should consist of a vector of xyLayerSizeShorts many shorts.
+    val replacementData: Vector[Short] = extensionMethod match {
+      case AllTrue => Vector.fill(xyLayerSizeShorts)(0xFFFF.toShort)
+      case AllFalse => Vector.fill(xyLayerSizeShorts)(0x0000.toShort)
+      case CopyBoundary => data.take(xyLayerSizeShorts)
     }
+
+    // We want the replacement data to be the *bottom* xy layer of the new mask, so it should
+    // be at the *front* of combinedData. Putting retainedData at the end is the same as shifting it upwards.
+    val combinedData: Vector[Short] = replacementData ++ retainedData
+
+    // New mask has the same dimensions as the original.
+    Mask(combinedData, xDim, yDim, zDim)
+
   }
 
   // Returns a copy of the current mask that has been shifted down one z coordinate / xy layer.
@@ -102,16 +112,25 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   // The highest xy layer in the copy is determined by the extension method argument.
   def shiftedDownZ(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
     import BoundaryOptions._
-    extensionMethod match {
-      case AllTrue =>
-        val replacement: Short = 0xFFFF.toShort
-        Mask(data.drop(xyLayerSizeShorts) ++ Vector.fill(xyLayerSizeShorts)(replacement), xDim, yDim, zDim)
-      case AllFalse =>
-        val replacement: Short = 0x0000.toShort
-        Mask(data.drop(xyLayerSizeShorts) ++ Vector.fill(xyLayerSizeShorts)(replacement), xDim, yDim, zDim)
-      case CopyBoundary =>
-        Mask(data.drop(xyLayerSizeShorts) ++ data.takeRight(xyLayerSizeShorts), xDim, yDim, zDim)
+
+    // This is the portion of the data that gets directly copied to the new mask.
+    // The bottom xy layer is not retained, so we drop that number of shorts from the beginning of the current data (which is arranged by xy layers anyway)
+    val retainedData: Vector[Short] = data.drop(xyLayerSizeShorts)
+
+    // We also need to determine what data makes up the top xy layer of the new mask.
+    // Whatever method we use, it should consist of a vector of xyLayerSizeShorts many shorts.
+    val replacementData: Vector[Short] = extensionMethod match {
+      case AllTrue => Vector.fill(xyLayerSizeShorts)(0xFFFF.toShort)
+      case AllFalse => Vector.fill(xyLayerSizeShorts)(0x0000.toShort)
+      case CopyBoundary => data.takeRight(xyLayerSizeShorts)
     }
+
+    // We want the replacement data to be the *top* xy layer of the new mask, so it should
+    // be at the *end* of combinedData. Putting retainedData at the front is the same as shifting it downwards.
+    val combinedData: Vector[Short] = retainedData ++ replacementData
+    
+    // New mask has the same dimensions as the original.
+    Mask(combinedData, xDim, yDim, zDim)
   }
 
   // Returns a copy of the current mask that has been shifted up one y coordinate / xz layer.
