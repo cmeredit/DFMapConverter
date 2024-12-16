@@ -1,11 +1,17 @@
 package io.github.cmeredit.game_map
 
-case class Mask(data: Vector[Short]) {
-  def getBit(x: Int, y: Int, z: Int, xDim: Int, yDim: Int, zDim: Int): Int = {
+case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
-    assert(xDim * yDim * zDim<= data.length * 16 , s"Cannot get data: Mask size smaller than requested map size. ${data.length * 16} vs ${xDim * yDim * zDim}")
+  val xRowSizeShorts: Int = xDim / 16
+  val xyLayerSizeShorts: Int = xRowSizeShorts * yDim
 
-    val bitIndex: Int = z * (xDim * yDim) + y * xDim + x
+  val xRowSizeBits: Int = xDim
+  val xyLayerSizeBits: Int = xRowSizeBits * yDim
+
+
+  def getBit(x: Int, y: Int, z: Int): Int = {
+
+    val bitIndex: Int = z * xyLayerSizeBits + y * xRowSizeBits + x
     val shortIndex: Int = bitIndex / 16
 
     val targetShort: Short = data(shortIndex)
@@ -21,9 +27,82 @@ case class Mask(data: Vector[Short]) {
     targetBit
   }
 
-  def getBoolean(x: Int, y: Int, z: Int, xDim: Int, yDim: Int, zDim: Int): Boolean = {
-    getBit(x, y, z, xDim, yDim, zDim) == 1
+  def getBoolean(x: Int, y: Int, z: Int): Boolean = {
+    getBit(x, y, z) == 1
   }
 
+  def neg(): Mask = Mask(data.map(s => (~s).toShort), xDim, yDim, zDim)
+  def applyOp(other: Mask, op: (Short, Short) => Short): Mask = Mask(data.zip(other.data).map({case (s1, s2) => op(s1, s2)}), xDim, yDim, zDim)
+  def or(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 | s2).toShort)
+  def and(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 & s2).toShort)
+  def xor(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 ^ s2).toShort)
+  def iff(other: Mask): Mask = (this xor other).neg()
+
+
+  def shiftedUpZ(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
+    import BoundaryOptions._
+    extensionMethod match {
+      case AllTrue =>
+        val replacement: Short = 0xFFFF.toShort
+        Mask(Vector.fill(xyLayerSizeShorts)(replacement) ++ data.dropRight(xyLayerSizeShorts), xDim, yDim, zDim)
+      case AllFalse =>
+        val replacement: Short = 0x0000.toShort
+        Mask(Vector.fill(xyLayerSizeShorts)(replacement) ++ data.dropRight(xyLayerSizeShorts), xDim, yDim, zDim)
+      case CopyBoundary =>
+        Mask(data.take(xyLayerSizeShorts) ++ data.dropRight(xyLayerSizeShorts), xDim, yDim, zDim)
+    }
+  }
+
+  def shiftedDownZ(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
+    import BoundaryOptions._
+    extensionMethod match {
+      case AllTrue =>
+        val replacement: Short = 0xFFFF.toShort
+        Mask(data.drop(xyLayerSizeShorts) ++ Vector.fill(xyLayerSizeShorts)(replacement), xDim, yDim, zDim)
+      case AllFalse =>
+        val replacement: Short = 0x0000.toShort
+        Mask(data.drop(xyLayerSizeShorts) ++ Vector.fill(xyLayerSizeShorts)(replacement), xDim, yDim, zDim)
+      case CopyBoundary =>
+        Mask(data.drop(xyLayerSizeShorts) ++ data.takeRight(xyLayerSizeShorts), xDim, yDim, zDim)
+    }
+  }
+
+  def shiftedUpY(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
+    import BoundaryOptions._
+
+
+    val retainedData: Vector[Vector[Short]] = data.sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts).toVector
+    val replacementData: Vector[Vector[Short]] = extensionMethod match {
+      case AllTrue =>
+        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
+        Vector.fill(zDim)(replacementRow)
+      case AllFalse =>
+        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
+        Vector.fill(zDim)(replacementRow)
+      case CopyBoundary => data.sliding(xRowSizeShorts, xyLayerSizeShorts).toVector
+    }
+
+    Mask(replacementData.zip(retainedData).flatMap({case (replacement, retained) => replacement ++ retained}), xDim, yDim, zDim)
+
+  }
+
+  def shiftedDownY(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
+    import BoundaryOptions._
+
+
+    val retainedData: Vector[Vector[Short]] = data.drop(xRowSizeShorts).sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts).toVector
+    val replacementData: Vector[Vector[Short]] = extensionMethod match {
+      case AllTrue =>
+        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
+        Vector.fill(zDim)(replacementRow)
+      case AllFalse =>
+        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
+        Vector.fill(zDim)(replacementRow)
+      case CopyBoundary => data.drop(xyLayerSizeShorts - xRowSizeShorts).sliding(xRowSizeShorts, xyLayerSizeShorts).toVector
+    }
+
+    Mask(replacementData.zip(retainedData).flatMap({case (replacement, retained) => replacement ++ retained}), xDim, yDim, zDim)
+
+  }
 
 }
