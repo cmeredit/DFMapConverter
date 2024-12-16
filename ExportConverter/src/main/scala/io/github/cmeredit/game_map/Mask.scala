@@ -239,8 +239,8 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
         // 0b 0000 0000 0000 0000 0000 0000 0000 0000
         case BoundaryOptions.AllFalse => 0x0000
         // 0b 0000 0000 0000 0000 1000 0000 0000 0000
-        case BoundaryOptions.AllTrue => 0xF000
-        case BoundaryOptions.CopyBoundary => 0xF000 & firstShort
+        case BoundaryOptions.AllTrue => 0x8000
+        case BoundaryOptions.CopyBoundary => 0x8000 & firstShort
       }
 
       // Converts a short to the corresponding unsigned int.
@@ -261,7 +261,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
       val shiftedXRow: Vector[Short] = xRow.tail.foldLeft[Vector[(Short, Boolean)]](initUpdatedRow)({case (curUpdatedRow, nextShort) =>
 
         val previousCarryFlag: Boolean = curUpdatedRow.last._2
-        val newHighBit: Int = if (previousCarryFlag) 0xF000 else 0x0000
+        val newHighBit: Int = if (previousCarryFlag) 0x8000 else 0x0000
 
         val updatedNextShort: Short = (rightshiftUShort(nextShort) | newHighBit).toShort
         val nextCarry: Boolean = (nextShort & 1) == 1
@@ -304,7 +304,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
       // Shift the first short, then set it with the boundary replacement
       val firstUpdatedShort: Short = ((firstShortToProcess << 1) | setLastBitMask).toShort
-      val firstCarry: Boolean = (firstShortToProcess & 0xF000) == 0xF000
+      val firstCarry: Boolean = (firstShortToProcess & 0x8000) == 0x8000
 
       // Prepare for the fold. Careful, we're folding from right to left
       // We'll start with the first updated short and a flag for whether we need to carry its highest bit.
@@ -313,13 +313,13 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
 
 
-      val shiftedXRow: Vector[Short] = xRow.tail.foldRight[Vector[(Short, Boolean)]](initUpdatedRow)({case (nextShort, curUpdatedRow) =>
+      val shiftedXRow: Vector[Short] = xRow.dropRight(1).foldRight[Vector[(Short, Boolean)]](initUpdatedRow)({case (nextShort, curUpdatedRow) =>
 
         val previousCarryFlag: Boolean = curUpdatedRow.head._2
         val newLowBit: Int = if (previousCarryFlag) 1 else 0
 
         val updatedNextShort: Short = ((nextShort << 1) | newLowBit).toShort
-        val nextCarry: Boolean = (nextShort & 0xF000) == 0xF000
+        val nextCarry: Boolean = (nextShort & 0x8000) == 0x8000
 
         curUpdatedRow.prepended((updatedNextShort, nextCarry))
 
