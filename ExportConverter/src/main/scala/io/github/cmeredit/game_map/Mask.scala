@@ -128,7 +128,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
     // We want the replacement data to be the *top* xy layer of the new mask, so it should
     // be at the *end* of combinedData. Putting retainedData at the front is the same as shifting it downwards.
     val combinedData: Vector[Short] = retainedData ++ replacementData
-    
+
     // New mask has the same dimensions as the original.
     Mask(combinedData, xDim, yDim, zDim)
   }
@@ -139,19 +139,38 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   def shiftedUpY(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
     import BoundaryOptions._
 
+    // This is the portion of the data that gets directly copied to the new mask.
+    // The bottom xz layer is not retained. Our data container is arranged by xy layer, not xz layer.
+    // Therefore, we need to think about what data is retained from each xy layer.
+    // Shifting up by y will make us lose the top x row from each xy layer, shift all other x rows up.
+    // This means that from each block of xyLayerSizeShorts, we need to take the shorts that represent the bottom (yDim-1) x rows.
+    // This is exactly the first xyLayerSizeShorts - xRowSizeShorts of the xy layer.
+    //
+    // This is equivalent to something like:
+    // data.grouped(xyLayerSizeShorts).map(xyLayer => xyLayer.dropRight(xRowSizeShorts))
+    //
+    // Unlike in the z shift case, we can't just tack the replacement data on the beginning or end of the new data array.
+    // Instead, it needs to be interleaved with the retained values. For this reason, we won't flatten things quite yet.
+    //
+    // Each element of this iterator is the retained data from the corresponding xy layer.
+    val retainedData: Iterator[Vector[Short]] = data.sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts)
 
-    val retainedData: Vector[Vector[Short]] = data.sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts).toVector
-    val replacementData: Vector[Vector[Short]] = extensionMethod match {
+    // Like before, reason about what to take from each xy layer.
+    val replacementData: Iterator[Vector[Short]] = extensionMethod match {
       case AllTrue =>
         val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
-        Vector.fill(zDim)(replacementRow)
+        Iterator.fill(zDim)(replacementRow)
       case AllFalse =>
         val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
-        Vector.fill(zDim)(replacementRow)
-      case CopyBoundary => data.sliding(xRowSizeShorts, xyLayerSizeShorts).toVector
+        Iterator.fill(zDim)(replacementRow)
+      case CopyBoundary => data.sliding(xRowSizeShorts, xyLayerSizeShorts) // Take the bottom x row from each xy layer
     }
 
-    Mask(replacementData.zip(retainedData).flatMap({case (replacement, retained) => replacement ++ retained}), xDim, yDim, zDim)
+    // Shifting *up* in y, so each replacement row should be placed at the *bottom* of its xy layer
+    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({case (retained, replacement) => replacement ++ retained}).toVector
+
+    // New mask has the same dimensions as the original.
+    Mask(combinedData, xDim, yDim, zDim)
 
   }
 
@@ -161,8 +180,17 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   def shiftedDownY(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
     import BoundaryOptions._
 
+    // See shiftedUpY comments for our general approach.
+    // As for the details of shifting down, we want to lose the bottom x row from each xy layer.
+    // The sliding function doesn't appear to have a version with the start index specified, so we achieve
+    // the same results by dropping the first x row.
+    //
+    // This is equivalent to something like:
+    // data.grouped(xyLayerSizeShorts).map(xyLayer => xyLayer.drop(xRowSizeShorts))
+    //
+    // Each element of this iterator is the retained data from the corresponding xy layer.
+    val retainedData: Iterator[Vector[Short]] = data.drop(xRowSizeShorts).sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts)
 
-    val retainedData: Vector[Vector[Short]] = data.drop(xRowSizeShorts).sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts).toVector
     val replacementData: Vector[Vector[Short]] = extensionMethod match {
       case AllTrue =>
         val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
@@ -170,10 +198,14 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
       case AllFalse =>
         val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
         Vector.fill(zDim)(replacementRow)
-      case CopyBoundary => data.drop(xyLayerSizeShorts - xRowSizeShorts).sliding(xRowSizeShorts, xyLayerSizeShorts).toVector
+      case CopyBoundary => data.drop(xyLayerSizeShorts - xRowSizeShorts).sliding(xRowSizeShorts, xyLayerSizeShorts).toVector // Take the top x row from each xy layer
     }
 
-    Mask(replacementData.zip(retainedData).flatMap({case (replacement, retained) => replacement ++ retained}), xDim, yDim, zDim)
+    // Shifting *down* in y, so each replacement row should be placed at the *top* of its xy layer
+    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({case (retained, replacement) => retained ++ replacement}).toVector
+
+    // New mask has the same dimensions as the original.
+    Mask(combinedData, xDim, yDim, zDim)
 
   }
 
