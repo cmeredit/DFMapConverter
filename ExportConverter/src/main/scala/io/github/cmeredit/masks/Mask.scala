@@ -343,4 +343,66 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   }
 
 
+  // Returns the bit/flag index of each true flag.
+  // E.g., if the first few shorts are:
+  // 0000 1000 0000 0000
+  // 0000 0000 0010 0000
+  // 0000 1000 0000 0001
+  // ...
+  // Then the returned vector will be
+  // Vector(4, 26, 36, 47, ...)
+  //
+  // Extracting individual flag values is slow, so try to minimize your use of this function.
+  def getTrueFlagIndices: Vector[Int] = {
+
+    // Use the index of each short to get the number of previous bits.
+    // Within each short, extract the bit indices of the set bits.
+    // Then combine the resulting info into overall bit/flag index.
+    data.zipWithIndex.flatMap({case (short, shortIndex) =>
+
+      // shortIndex previous shorts, each with shortSizeBits bits
+      val numPreviousBits: Int = shortIndex * shortSizeBits
+
+      // Bit-shifting a short widens the value anyway - Scala only supports bit-shifting ints.
+      // Instead of repeating the widening 8 times, just do it once.
+      val widenedVal: Int = short & 0xFFFF
+
+//      // You know, maybe this is the simplest way, but it's probably not the fastest.
+//      // We're doing a lot of unnecessary shifting.
+//      // Instead of going through a pseudo loop like this, let's just
+//      // unroll the entire loop and skip the shifting step entirely.
+//      val setBitIndices = (0 until shortSizeBits).filter(k => {
+//        ((widenedVal << k) & 0x8000) == 0x8000
+//      }).toVector
+
+      // Yes, I know how ugly an unrolled loop is, but can you argue it's not fast?
+      // If so, please let me know!
+      val isolatedBits = Vector(
+        widenedVal & 0x8000, // 1000 0000 ...
+        widenedVal & 0x4000, // 0100 0000 ...
+        widenedVal & 0x2000, // 0010 0000 ...
+        widenedVal & 0x1000, // 0001 0000 ...
+        widenedVal & 0x800, // 0000 1000 ...
+        widenedVal & 0x400, // 0000 0100 ...
+        widenedVal & 0x200, // 0000 0010 ...
+        widenedVal & 0x100, // 0000 0001 ...
+        widenedVal & 0x80, // ... 1000 0000
+        widenedVal & 0x40, // ... 0100 0000
+        widenedVal & 0x20, // ... 0010 0000
+        widenedVal & 0x10, // ... 0001 0000
+        widenedVal & 0x8, // 1000
+        widenedVal & 0x4, // 0100
+        widenedVal & 0x2, // 0010
+        widenedVal & 0x1, // 0001
+      )
+
+      val setBitIndices = isolatedBits.zipWithIndex.filter(_._1 != 0).map(_._2)
+
+      setBitIndices.map(_ + numPreviousBits)
+
+    })
+
+  }
+
+
 }
