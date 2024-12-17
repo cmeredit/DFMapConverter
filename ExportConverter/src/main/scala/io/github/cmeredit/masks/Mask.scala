@@ -80,6 +80,8 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
   def and(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 & s2).toShort)
 
+  def nand(other: Mask): Mask = applyOp(other, (s1, s2) => (~(s1 & s2)).toShort)
+
   def xor(other: Mask): Mask = applyOp(other, (s1, s2) => (s1 ^ s2).toShort)
 
   def iff(other: Mask): Mask = (this xor other).neg()
