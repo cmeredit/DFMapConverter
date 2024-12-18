@@ -1,5 +1,6 @@
 package io.github.cmeredit.mesh
 
+import io.github.cmeredit.Orientations._
 import io.github.cmeredit.masks.Mask
 
 import java.io.{BufferedWriter, FileWriter}
@@ -68,26 +69,6 @@ object Mesh {
   }
 
 
-  // Returns a mesh just containing the interface between flagged and un-flagged locations in the mesh.
-  // I.e., a coordinate that is flagged that is adjacent to an un-flagged coordinate.
-  // Considers off-mask coordinates as un-flagged / non-solid
-  def surfaceMeshFromSolidityMask(solidityMask: Mask): Mesh = {
 
-    import io.github.cmeredit.masks.BoundaryOptions.AllFalse
-
-    val xBoundaryMask: Mask = solidityMask and (
-        // Neither neighbor is solid. Consider off-mask values non-solid
-        solidityMask.shiftedDownX(AllFalse) nand solidityMask.shiftedUpX(AllFalse)
-      )
-    val yBoundaryMask: Mask = solidityMask and (
-      // Neither neighbor is solid. Consider off-mask values non-solid
-      solidityMask.shiftedDownY(AllFalse) nand solidityMask.shiftedUpY(AllFalse)
-      )
-    val zBoundaryMask: Mask = solidityMask and (
-      // Neither neighbor is solid. Consider off-mask values non-solid
-      solidityMask.shiftedDownZ(AllFalse) nand solidityMask.shiftedUpZ(AllFalse)
-      )
-
-  }
 
 }
