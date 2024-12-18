@@ -9,18 +9,20 @@ case class Mesh(faces: Vector[Face]) {
 
   def saveToObj(filename: String, scale: Double): Unit = {
 
-    val vertexIndexMap: Map[Vertex, Int] = faces.flatMap(_.vertices).distinct.zipWithIndex.toMap
+
+    val orderedVertices: Vector[Vertex] = faces.flatMap(_.vertices).distinct
+    val vertexIndexMap: Map[Vertex, Int] = orderedVertices.zipWithIndex.toMap
 
     val outFile: BufferedWriter = new BufferedWriter(new FileWriter(filename))
 
-    vertexIndexMap.foreach({case (Vertex(x, y, z), _) =>
-      outFile.write(f"v ${x.toDouble * scale} ${y.toDouble * scale} ${z.toDouble * scale}")
+    orderedVertices.foreach({case Vertex(x, y, z) =>
+      outFile.write(f"v ${x.toDouble * scale} ${y.toDouble * scale} ${z.toDouble * scale}\n")
     })
 
     faces.foreach({case Face(vertices) =>
       val vertexLabels = vertices.map(v => (vertexIndexMap(v) + 1).toString)
       val vertexLabelLine = vertexLabels.reduce(_ + " " + _)
-      outFile.write(f"f $vertexLabelLine")
+      outFile.write(f"f $vertexLabelLine\n")
     })
 
     outFile.close()
@@ -59,16 +61,55 @@ object Mesh {
       )
     }
 
-    (0 until cubeMask.zDim).flatMap(z => {
-      (0 until cubeMask.yDim).flatMap(y => {
-        (0 until cubeMask.xDim).flatMap(x => {
-          if (cubeMask.getBoolean(x, y, z)) => Some(getCubeAt(x, y, z)) else None
-        })
+    val faces: Vector[Face] = (0 until cubeMask.zDim).flatMap(z => {
+
+      val zLayerFaces = (0 until cubeMask.yDim).flatMap(y => {
+        val xRowFaces = (0 until cubeMask.xDim).flatMap(x => {
+          if (cubeMask.getBoolean(x, y, z)) Some(getCubeAt(x, y, z)) else None
+        }).flatten
+
+        xRowFaces
       })
-    })
+
+      zLayerFaces
+    }).toVector
+
+    Mesh(faces)
   }
 
 
+  // Returns a mesh just containing the interface between flagged and un-flagged locations in the mesh.
+  // I.e., a coordinate that is flagged that is adjacent to an un-flagged coordinate.
+  // Considers off-mask coordinates as un-flagged / non-solid
+  def surfaceMeshFromSolidityMask(solidityMask: Mask): Mesh = {
 
+    import io.github.cmeredit.masks.BoundaryOptions.AllFalse
+
+    val axes: Vector[Axis] = Vector(X, Y, Z)
+    val directions: Vector[Boolean] = Vector(false, true)
+
+    val orientations: Vector[Orientation] = for (
+      axis <- axes;
+      direction <- directions
+    ) yield Orientation(axis, direction)
+
+
+    val orientationMasks: Vector[(Orientation, Mask)] = orientations.map(orientation => {
+      // E.g., if making *right*-hand surfaces, we need to shift the mask to the *left*
+      val shiftingOrientation = orientation.copy(upwards = !orientation.upwards)
+      val surfaceMask = solidityMask and solidityMask.shifted(shiftingOrientation, AllFalse).neg()
+      (orientation, surfaceMask)
+    })
+
+    val faces: Vector[Face] = orientationMasks.flatMap({case (orientation, mask) =>
+      val faceCoordinates: Vector[(Int, Int, Int)] = mask.getTrueFlagCoordinates
+      faceCoordinates.map({case (x, y, z) =>
+        Face.squareFromAxisWithUpwardsOffset(orientation, Vertex(x, y, z))
+      })
+    })
+
+    Mesh(faces)
+
+  }
 
 }
