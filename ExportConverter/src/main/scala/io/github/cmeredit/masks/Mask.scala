@@ -1,5 +1,8 @@
 package io.github.cmeredit.masks
 
+import BoundaryOptions._
+import io.github.cmeredit.Orientations._
+
 // Provides convenience methods for mask data stored as a 1-Dim container of numerical values
 case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
@@ -86,261 +89,186 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
   def iff(other: Mask): Mask = (this xor other).neg()
 
-  // Returns a copy of the current mask that has been shifted up one z coordinate / xy layer.
-  // The copy does not contain the highest xy layer of the original mask.
-  // The bottom xy layer in the copy is determined by the extension method argument.
+  // Returns a copy of the current mask that has been shifted up/down one xy / yz / xz layer, depending on [direction]
+  // The copy does not contain the portion of the original mesh that gets shifted out of bounds
+  // extensionMethod determines how to fill the coordinates that got shifted away from. E.g., if shifting up
+  // in the Z direction, this determines how the bottom xy layer in the new mask should be filled
   // For example, with method "AllTrue", the bottom xy layer of the returned mask will have all its bits set.
   // As another example, with the method "CopyBoundary", the bottom xy layer of the returned mask is the same as in the original mask.
-  def shiftedUpZ(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
-    import BoundaryOptions._
+  def shifted(direction: Orientation, extensionMethod: BoundaryExtensionMethod = AllFalse): Mask = direction match {
+    case Orientation(X, upwards) => {
 
-    // This is the portion of the data that gets directly copied to the new mask.
-    // The top xy layer is not retained, so we drop that number of shorts from the end of the current data (which is arranged by xy layers anyway)
-    val retainedData: Vector[Short] = data.dropRight(xyLayerSizeShorts)
+      // This is going to be the worst of all the shifting methods.
+      // The reason is that no individual short needs to be changed in the y or z shifting methods.
+      // However, since each short is a collection of x-aligned mask values, we need to shift bits
+      // within each short, and also carry bits between successive shorts (not passing xRow boundaries).
 
-    // We also need to determine what data makes up the bottom xy layer of the new mask.
-    // Whatever method we use, it should consist of a vector of xyLayerSizeShorts many shorts.
-    val replacementData: Vector[Short] = extensionMethod match {
-      case AllTrue => Vector.fill(xyLayerSizeShorts)(0xFFFF.toShort)
-      case AllFalse => Vector.fill(xyLayerSizeShorts)(0x0000.toShort)
-      case CopyBoundary => data.take(xyLayerSizeShorts)
+      // I'm not sure if this is the best implementation, but I think this is going to be fairly slow
+      // no matter what I do.
+
+      // Unlike in the other cases, we're not going to make a clear "retained" and "replacement".
+      // Instead, we're going to group by x row, operate on that row, and flatten.
+
+      val xRows: Iterator[Vector[Short]] = data.grouped(xRowSizeShorts)
+      val updatedXRows: Iterator[Vector[Short]] = xRows.map(xRow => {
+
+        // To shift this x row up, we need to shift every bit up, carrying bits between successive shorts.
+        // We'll replace the very first bit depending on the extension method, and lose the very last bit of the last short no matter what.
+        // This seems like the work of a fold!
+        //
+        // If shifting downwards, we'll fold right instead, carrying highest bits to lowest
+        val firstShortToProcess: Short = if (upwards) xRow.head else xRow.last
+
+        val firstBitSettingMask: Int = extensionMethod match {
+          case BoundaryOptions.AllFalse => 0x0000
+          case BoundaryOptions.AllTrue => if (upwards) 0x8000 else 0x0001
+          case BoundaryOptions.CopyBoundary => if (upwards) 0x8000 & firstShortToProcess else firstShortToProcess & 0x0001
+        }
+
+        // Converts a short to the corresponding unsigned int.
+        def getUInt(short: Short): Int = short & 0xFFFF
+
+        // Right shifts a short without dragging the sign bit
+        // Note that this is always used with further bitwise operations, so don't convert back to a short quite yet.
+        def rightshiftUShort(short: Short): Int = getUInt(short) >> 1
+
+        // If shifting the mask upwards, we'll need to shift individual bits upwards within
+        // and between shorts. In order to prevent weirdness with sign bits, when shifting right,
+        // first convert to an unsigned int
+        val shiftUShort: Short => Int = {
+          if (upwards) {
+            getUInt(_) >> 1
+          } else {
+            _ << 1
+          }
+        }
+
+        // If shifting upwards, we'll take the least significant bit to the next short
+        // Otherwise, we're taking the most significant bit to the preceding short
+        val carryMask: Int = if (upwards) 0x0001 else 0x8000
+
+        def getCarry(short: Short): Boolean = short & carryMask == carryMask
+
+        // Get first updated short by shifting in the previously decided direction and setting the appropriate bit
+        val firstUpdatedShort: Short = (shiftUShort(firstShortToProcess) | firstBitSettingMask).toShort
+        val firstCarry: Boolean = getCarry(firstShortToProcess)
+
+        // Prepare for the fold.
+        // We'll start with the first updated short and a flag for whether we need to carry
+        // In the fold, we'll take each subsequent short, shift it, incorporate previous carry, and set the next carry flag.
+        val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
+        val remainingSectionToUpdate: Vector[Short] = if (upwards) xRow.tail else xRow.dropRight(1)
+
+        val foldingOp: (Vector[(Short, Boolean)], Short) => Vector[(Short, Boolean)] = {
+          case (curUpdatedRow, nextShort) =>
+
+            val previousCarryFlag: Boolean = if (upwards) curUpdatedRow.last._2 else curUpdatedRow.head._2
+            val newReplacementBit: Int = if (previousCarryFlag) carryMask else 0x0000
+
+            val updatedNextShort: Short = (shiftUShort(nextShort) | newReplacementBit).toShort
+            val nextCarry: Boolean = getCarry(nextShort)
+
+            if (upwards) curUpdatedRow.appended((updatedNextShort, nextCarry))
+            else curUpdatedRow.prepended((updatedNextShort, nextCarry))
+
+        }
+
+        val shiftedXRowWithCarries: Vector[(Short, Boolean)] = if (upwards) {
+          remainingSectionToUpdate.foldLeft(initUpdatedRow)(foldingOp)
+        } else {
+          remainingSectionToUpdate.foldRight(initUpdatedRow)({ case (nextShort, curUpdatedRow) =>
+            foldingOp(curUpdatedRow, nextShort)
+          })
+        }
+
+        val shiftedXRow: Vector[Short] = shiftedXRowWithCarries.map({ case (updatedShort, _ /*Carry info (which can now be forgotten)*/ ) => updatedShort })
+
+        shiftedXRow
+
+      })
+
+      // Traverse the iterator and put the results in a vector
+      val updatedData = updatedXRows.flatten.toVector
+
+      // New mask has the same dimensions as the original.
+      Mask(updatedData, xDim, yDim, zDim)
     }
 
-    // We want the replacement data to be the *bottom* xy layer of the new mask, so it should
-    // be at the *front* of combinedData. Putting retainedData at the end is the same as shifting it upwards.
-    val combinedData: Vector[Short] = replacementData ++ retainedData
-
-    // New mask has the same dimensions as the original.
-    Mask(combinedData, xDim, yDim, zDim)
-
-  }
-
-  // Returns a copy of the current mask that has been shifted down one z coordinate / xy layer.
-  // The copy does not contain the lowest xy layer of the original mask.
-  // The highest xy layer in the copy is determined by the extension method argument.
-  def shiftedDownZ(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
-    import BoundaryOptions._
-
-    // This is the portion of the data that gets directly copied to the new mask.
-    // The bottom xy layer is not retained, so we drop that number of shorts from the beginning of the current data (which is arranged by xy layers anyway)
-    val retainedData: Vector[Short] = data.drop(xyLayerSizeShorts)
-
-    // We also need to determine what data makes up the top xy layer of the new mask.
-    // Whatever method we use, it should consist of a vector of xyLayerSizeShorts many shorts.
-    val replacementData: Vector[Short] = extensionMethod match {
-      case AllTrue => Vector.fill(xyLayerSizeShorts)(0xFFFF.toShort)
-      case AllFalse => Vector.fill(xyLayerSizeShorts)(0x0000.toShort)
-      case CopyBoundary => data.takeRight(xyLayerSizeShorts)
-    }
-
-    // We want the replacement data to be the *top* xy layer of the new mask, so it should
-    // be at the *end* of combinedData. Putting retainedData at the front is the same as shifting it downwards.
-    val combinedData: Vector[Short] = retainedData ++ replacementData
-
-    // New mask has the same dimensions as the original.
-    Mask(combinedData, xDim, yDim, zDim)
-  }
-
-  // Returns a copy of the current mask that has been shifted up one y coordinate / xz layer.
-  // The copy does not contain the highest xz layer of the original mask.
-  // The lowest xz layer in the copy is determined by the extension method argument.
-  def shiftedUpY(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
-    import BoundaryOptions._
-
-    // This is the portion of the data that gets directly copied to the new mask.
-    // The bottom xz layer is not retained. Our data container is arranged by xy layer, not xz layer.
-    // Therefore, we need to think about what data is retained from each xy layer.
-    // Shifting up by y will make us lose the top x row from each xy layer, shift all other x rows up.
-    // This means that from each block of xyLayerSizeShorts, we need to take the shorts that represent the bottom (yDim-1) x rows.
-    // This is exactly the first xyLayerSizeShorts - xRowSizeShorts of the xy layer.
-    //
-    // This is equivalent to something like:
-    // data.grouped(xyLayerSizeShorts).map(xyLayer => xyLayer.dropRight(xRowSizeShorts))
-    //
-    // Unlike in the z shift case, we can't just tack the replacement data on the beginning or end of the new data array.
-    // Instead, it needs to be interleaved with the retained values. For this reason, we won't flatten things quite yet.
-    //
-    // Each element of this iterator is the retained data from the corresponding xy layer.
-    val retainedData: Iterator[Vector[Short]] = data.sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts)
-
-    // Like before, reason about what to take from each xy layer.
-    val replacementData: Iterator[Vector[Short]] = extensionMethod match {
-      case AllTrue =>
-        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
-        Iterator.fill(zDim)(replacementRow)
-      case AllFalse =>
-        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
-        Iterator.fill(zDim)(replacementRow)
-      case CopyBoundary => data.sliding(xRowSizeShorts, xyLayerSizeShorts) // Take the bottom x row from each xy layer
-    }
-
-    // Shifting *up* in y, so each replacement row should be placed at the *bottom* of its xy layer
-    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({ case (retained, replacement) => replacement ++ retained }).toVector
-
-    // New mask has the same dimensions as the original.
-    Mask(combinedData, xDim, yDim, zDim)
-
-  }
-
-  // Returns a copy of the current mask that has been shifted down one y coordinate / xz layer.
-  // The copy does not contain the lowest xz layer of the original mask.
-  // The highest xz layer in the copy is determined by the extension method argument.
-  def shiftedDownY(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
-    import BoundaryOptions._
-
-    // See shiftedUpY comments for our general approach.
-    // As for the details of shifting down, we want to lose the bottom x row from each xy layer.
-    // The sliding function doesn't appear to have a version with the start index specified, so we achieve
-    // the same results by dropping the first x row.
-    //
-    // This is equivalent to something like:
-    // data.grouped(xyLayerSizeShorts).map(xyLayer => xyLayer.drop(xRowSizeShorts))
-    //
-    // Each element of this iterator is the retained data from the corresponding xy layer.
-    val retainedData: Iterator[Vector[Short]] = data.drop(xRowSizeShorts).sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts)
-
-    val replacementData: Vector[Vector[Short]] = extensionMethod match {
-      case AllTrue =>
-        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
-        Vector.fill(zDim)(replacementRow)
-      case AllFalse =>
-        val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
-        Vector.fill(zDim)(replacementRow)
-      case CopyBoundary => data.drop(xyLayerSizeShorts - xRowSizeShorts).sliding(xRowSizeShorts, xyLayerSizeShorts).toVector // Take the top x row from each xy layer
-    }
-
-    // Shifting *down* in y, so each replacement row should be placed at the *top* of its xy layer
-    val combinedData: Vector[Short] = retainedData.zip(replacementData).flatMap({ case (retained, replacement) => retained ++ replacement }).toVector
-
-    // New mask has the same dimensions as the original.
-    Mask(combinedData, xDim, yDim, zDim)
-
-  }
-
-  // Returns a copy of the current mask that has been shifted up one x coordinate / yz layer.
-  // The copy does not contain the highest yz layer of the original mask.
-  // The lowest yz layer in the copy is determined by the extension method argument.
-  def shiftedUpX(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
-
-    // This is going to be the worst of all the shifting methods.
-    // The reason is that no individual short needs to be changed in the y or z shifting methods.
-    // However, since each short is a collection of x-aligned mask values, we need to shift bits
-    // within each short, and also carry bits between successive shorts (not passing xRow boundaries).
-
-    // I'm not sure if this is the best implementation, but I think this is going to be fairly slow
-    // no matter what I do.
-
-    // Unlike before, we're not going to make a clear "retained" and "replacement".
-    // Instead, we're going to group by x row, operate on that row, and flatten.
-
-    val xRows: Iterator[Vector[Short]] = data.grouped(xRowSizeShorts)
-    val updatedXRows: Iterator[Vector[Short]] = xRows.map(xRow => {
-
-      // To shift this x row up, we need to shift every bit up, carrying bits between successive shorts.
-      // We'll replace the very first bit depending on the extension method, and lose the very last bit of the last short no matter what.
-      // This seems like the work of a fold!
-
-      val firstShort: Short = xRow.head
-
-      val setFirstBitMask: Int = extensionMethod match {
-        // 0b 0000 0000 0000 0000 0000 0000 0000 0000
-        case BoundaryOptions.AllFalse => 0x0000
-        // 0b 0000 0000 0000 0000 1000 0000 0000 0000
-        case BoundaryOptions.AllTrue => 0x8000
-        case BoundaryOptions.CopyBoundary => 0x8000 & firstShort
+    case Orientation(Y, upwards) => {
+      // This is the portion of the data that gets directly copied to the new mask.
+      //
+      // If shifting upwards:
+      //
+      // The bottom xz layer is not retained. Our data container is arranged by xy layer, not xz layer!
+      // Therefore, we need to think about what data is retained from each xy layer.
+      // Shifting up by y will make us lose the top x row from each xy layer, shift all other x rows up.
+      // This means that from each block of xyLayerSizeShorts, we need to take the shorts that represent the bottom (yDim-1) x rows.
+      // This is exactly the first xyLayerSizeShorts - xRowSizeShorts of the xy layer.
+      //
+      // This is equivalent to something like:
+      // data.grouped(xyLayerSizeShorts).map(xyLayer => xyLayer.dropRight(xRowSizeShorts))
+      //
+      // Unlike in the z shift case, we can't just tack the replacement data on the beginning or end of the new data array.
+      // Instead, it needs to be interleaved with the retained values. For this reason, we won't flatten things quite yet.
+      //
+      // Each element of this iterator is the retained data from the corresponding xy layer.
+      //
+      // If shifting downwards:
+      // Similar, except we want to start our slide one x-row worth of data later.
+      val retainedData: Iterator[Vector[Short]] = if (upwards) {
+        data.sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts)
+      } else {
+        data.drop(xRowSizeShorts).sliding(xyLayerSizeShorts - xRowSizeShorts, xyLayerSizeShorts)
       }
 
-      // Converts a short to the corresponding unsigned int.
-      def getUInt(short: Short): Int = short & 0xFFFF
-
-      // Right shifts a short without dragging the sign bit
-      // Note that this is always used with further bitwise operations, so don't convert back to a short quite yet.
-      def rightshiftUShort(short: Short): Int = getUInt(short) >> 1
-
-      // Shift the first short, then set it with the boundary replacement
-      val firstUpdatedShort: Short = (rightshiftUShort(firstShort) | setFirstBitMask).toShort
-      val firstCarry: Boolean = (firstShort & 1) == 1
-
-      // Prepare for the fold.
-      // We'll start with the first updated short and a flag for whether we need to carry its lowest bit.
-      // In the fold, we'll take each subsequent short, shift it, update its first bit depending on the previous carry flag, and set the next carry flag.
-      val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
-
-      val shiftedXRow: Vector[Short] = xRow.tail.foldLeft[Vector[(Short, Boolean)]](initUpdatedRow)({ case (curUpdatedRow, nextShort) =>
-
-        val previousCarryFlag: Boolean = curUpdatedRow.last._2
-        val newHighBit: Int = if (previousCarryFlag) 0x8000 else 0x0000
-
-        val updatedNextShort: Short = (rightshiftUShort(nextShort) | newHighBit).toShort
-        val nextCarry: Boolean = (nextShort & 1) == 1
-
-        curUpdatedRow.appended((updatedNextShort, nextCarry))
-
-      }).map({ case (updatedShort, _ /*Carry info (which can now be forgotten)*/ ) => updatedShort })
-
-      shiftedXRow
-
-    })
-
-    // Traverse the iterator and put the results in a vector
-    val updatedData = updatedXRows.flatten.toVector
-
-    // New mask has the same dimensions as the original.
-    Mask(updatedData, xDim, yDim, zDim)
-
-  }
-
-
-  // Returns a copy of the current mask that has been shifted down one x coordinate / yz layer.
-  // The copy does not contain the lowest yz layer of the original mask.
-  // The highest yz layer in the copy is determined by the extension method argument.
-  def shiftedDownX(extensionMethod: BoundaryOptions.BoundaryExtensionMethod): Mask = {
-
-    // We will take the same approach as in shiftedUpX, so it may be useful to read the comments there.
-    // The main difference in shifting down is that to process each x row, we work from right to left.
-
-    val xRows: Iterator[Vector[Short]] = data.grouped(xRowSizeShorts)
-    val updatedXRows: Iterator[Vector[Short]] = xRows.map(xRow => {
-
-      val firstShortToProcess: Short = xRow.last
-
-      val setLastBitMask: Int = extensionMethod match {
-        case BoundaryOptions.AllFalse => 0
-        case BoundaryOptions.AllTrue => 1
-        case BoundaryOptions.CopyBoundary => firstShortToProcess & 1
+      // Like before, reason about what to take from each xy layer.
+      val replacementData: Iterator[Vector[Short]] = extensionMethod match {
+        case AllTrue =>
+          val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0xFFFF.toShort)
+          Iterator.fill(zDim)(replacementRow)
+        case AllFalse =>
+          val replacementRow: Vector[Short] = Vector.fill(xRowSizeShorts)(0x0000.toShort)
+          Iterator.fill(zDim)(replacementRow)
+        case CopyBoundary => if (upwards) {
+          data.sliding(xRowSizeShorts, xyLayerSizeShorts) // Take the bottom x row from each xy layer
+        } else {
+          data.drop(xyLayerSizeShorts - xRowSizeShorts).sliding(xRowSizeShorts, xyLayerSizeShorts) // Take the top x row from each xy layer
+        }
       }
 
-      // Shift the first short, then set it with the boundary replacement
-      val firstUpdatedShort: Short = ((firstShortToProcess << 1) | setLastBitMask).toShort
-      val firstCarry: Boolean = (firstShortToProcess & 0x8000) == 0x8000
+      // If shifting up, the replacement data should be at the bottom of each xy layer. Otherwise, it should be at the top.
+      val combinedData: Vector[Short] = if (upwards) {
+        retainedData.zip(replacementData).flatMap({ case (retained, replacement) => replacement ++ retained }).toVector
+      } else {
+        retainedData.zip(replacementData).flatMap({ case (retained, replacement) => retained ++ replacement }).toVector
+      }
 
-      // Prepare for the fold. Careful, we're folding from right to left
-      // We'll start with the first updated short and a flag for whether we need to carry its highest bit.
-      // In the fold, we'll take each preceding short, shift it, update its last bit depending on the previous carry flag, and set the next carry flag.
-      val initUpdatedRow: Vector[(Short, Boolean)] = Vector((firstUpdatedShort, firstCarry))
+      // New mask has the same dimensions as the original.
+      Mask(combinedData, xDim, yDim, zDim)
+    }
+
+    case Orientation(Z, upwards) => {
+
+      // If we're shifting upwards, then drop the top xy layer of shorts. Otherwise, drop the bottom xy later.
+      val retainedData: Vector[Short] = if (upwards) data.dropRight(xyLayerSizeShorts) else data.drop(xyLayerSizeShorts)
+
+      // We also need to determine what data makes up the bottom xy layer of the new mask.
+      // Whatever method we use, it should consist of a vector of xyLayerSizeShorts many shorts.
+      val replacementData: Vector[Short] = extensionMethod match {
+        case AllTrue => Vector.fill(xyLayerSizeShorts)(0xFFFF.toShort)
+        case AllFalse => Vector.fill(xyLayerSizeShorts)(0x0000.toShort)
+        case CopyBoundary => if (upwards) data.take(xyLayerSizeShorts) else data.takeRight(xyLayerSizeShorts)
+      }
 
 
-      val shiftedXRow: Vector[Short] = xRow.dropRight(1).foldRight[Vector[(Short, Boolean)]](initUpdatedRow)({ case (nextShort, curUpdatedRow) =>
+      // If shifting upwards, we want the replacement data to be the *bottom* xy layer of the new mask, so it should
+      // be at the *front* of combinedData. Putting retainedData at the end is the same as shifting it upwards.
+      // If shifting downwards, we want the opposite
+      val combinedData: Vector[Short] = if (upwards) replacementData ++ retainedData else retainedData ++ replacementData
 
-        val previousCarryFlag: Boolean = curUpdatedRow.head._2
-        val newLowBit: Int = if (previousCarryFlag) 1 else 0
-
-        val updatedNextShort: Short = ((nextShort << 1) | newLowBit).toShort
-        val nextCarry: Boolean = (nextShort & 0x8000) == 0x8000
-
-        curUpdatedRow.prepended((updatedNextShort, nextCarry))
-
-      }).map({ case (updatedShort, _ /*Carry info (which can now be forgotten)*/ ) => updatedShort })
-
-      shiftedXRow
-
-    })
-
-    // Traverse the iterator and put the results in a vector
-    val updatedData = updatedXRows.flatten.toVector
-
-    // New mask has the same dimensions as the original.
-    Mask(updatedData, xDim, yDim, zDim)
+      // New mask has the same dimensions as the original.
+      Mask(combinedData, xDim, yDim, zDim)
+    }
 
   }
 
