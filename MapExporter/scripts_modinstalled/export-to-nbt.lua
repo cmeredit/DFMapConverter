@@ -264,6 +264,7 @@ local function main()
 
             local dataRetrievalFunc = function(x_coord, y_coord, z_coord)
                 local designation, _ = dfhack.maps.getTileFlags(x_coord, y_coord, z_coord)
+                if designation == nil then return false end
                 -- designation[0]: liquid level.
                 -- designation[21]: liquid type. Set to true if there is magma present (or in weird cases, seemingly randomly? e.g., I've seen a tile with a door no liquid have this set to "true")
                 -- Magma is present in the specified tile iff the tile has liquid of type "true"
@@ -284,6 +285,7 @@ local function main()
 
             local dataRetrievalFunc = function(x_coord, y_coord, z_coord)
                 local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
+                if tileType == nil then return false end
                 local tileTypeAttributes = df.tiletype.attrs[tileType]
                 local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
                 return (tileShapeAttributes.walkable or tileShapeAttributes.passable_flow_down)
@@ -296,6 +298,7 @@ local function main()
 
             local walkableDataRetrievalFunc = function(x_coord, y_coord, z_coord)
                 local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
+                if tileType == nil then return false end
                 local tileTypeAttributes = df.tiletype.attrs[tileType]
                 local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
                 return tileShapeAttributes.walkable
@@ -306,6 +309,7 @@ local function main()
 
             local pfdDataRetrievalFunc = function(x_coord, y_coord, z_coord)
                 local tileType = dfhack.maps.getTileType(x_coord, y_coord, z_coord)
+                if tileType == nil then return false end
                 local tileTypeAttributes = df.tiletype.attrs[tileType]
                 local tileShapeAttributes = df.tiletype_shape.attrs[tileTypeAttributes.shape]
                 return tileShapeAttributes.passable_flow_down
@@ -398,7 +402,7 @@ local function main()
         if validArgs.onlyOpen.flag then optionsStr = optionsStr .. " -o" end
         if optionsStr ~= "" then optionsStr = " - with options" .. optionsStr end
 
-        local path = statePath .. "df map export - " .. datetimeStr .. optionsStr .. ".nbt"
+        local path = (statePath .. "df map export - " .. datetimeStr .. optionsStr .. ".nbt"):gsub(":", "-")
 
         -- Open
         local f = io.open(path, "wb")
