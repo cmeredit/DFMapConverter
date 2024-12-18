@@ -119,18 +119,24 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
         // If shifting downwards, we'll fold right instead, carrying highest bits to lowest
         val firstShortToProcess: Short = if (upwards) xRow.head else xRow.last
 
+        val emptyMaskInt = 0x0000
+        val fullMaskInt = 0xFFFF
+        val topBitMaskInt = 0x8000
+        val bottomBitMaskInt = 0x0001
+        val setCarryBitMaskInt = if (upwards) topBitMaskInt else bottomBitMaskInt
+
         val firstBitSettingMask: Int = extensionMethod match {
-          case BoundaryOptions.AllFalse => 0x0000
-          case BoundaryOptions.AllTrue => if (upwards) 0x8000 else 0x0001
-          case BoundaryOptions.CopyBoundary => if (upwards) 0x8000 & firstShortToProcess else firstShortToProcess & 0x0001
+          case BoundaryOptions.AllFalse => emptyMaskInt
+          case BoundaryOptions.AllTrue => if (upwards) topBitMaskInt else bottomBitMaskInt
+          case BoundaryOptions.CopyBoundary => if (upwards) topBitMaskInt & firstShortToProcess else firstShortToProcess & bottomBitMaskInt
         }
 
         // Converts a short to the corresponding unsigned int.
-        def getUInt(short: Short): Int = short & 0xFFFF
+        def getUInt(short: Short): Int = short & fullMaskInt
 
-        // Right shifts a short without dragging the sign bit
-        // Note that this is always used with further bitwise operations, so don't convert back to a short quite yet.
-        def rightshiftUShort(short: Short): Int = getUInt(short) >> 1
+//        // Right shifts a short without dragging the sign bit
+//        // Note that this is always used with further bitwise operations, so don't convert back to a short quite yet.
+//        def rightshiftUShort(short: Short): Int = getUInt(short) >> 1
 
         // If shifting the mask upwards, we'll need to shift individual bits upwards within
         // and between shorts. In order to prevent weirdness with sign bits, when shifting right,
@@ -145,9 +151,9 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
 
         // If shifting upwards, we'll take the least significant bit to the next short
         // Otherwise, we're taking the most significant bit to the preceding short
-        val carryMask: Int = if (upwards) 0x0001 else 0x8000
+        val carryMask: Int = if (upwards) bottomBitMaskInt else topBitMaskInt
 
-        def getCarry(short: Short): Boolean = short & carryMask == carryMask
+        def getCarry(short: Short): Boolean = (short & carryMask) == carryMask
 
         // Get first updated short by shifting in the previously decided direction and setting the appropriate bit
         val firstUpdatedShort: Short = (shiftUShort(firstShortToProcess) | firstBitSettingMask).toShort
@@ -163,7 +169,7 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
           case (curUpdatedRow, nextShort) =>
 
             val previousCarryFlag: Boolean = if (upwards) curUpdatedRow.last._2 else curUpdatedRow.head._2
-            val newReplacementBit: Int = if (previousCarryFlag) carryMask else 0x0000
+            val newReplacementBit: Int = if (previousCarryFlag) setCarryBitMaskInt else emptyMaskInt
 
             val updatedNextShort: Short = (shiftUShort(nextShort) | newReplacementBit).toShort
             val nextCarry: Boolean = getCarry(nextShort)
@@ -334,6 +340,15 @@ case class Mask(data: Vector[Short], xDim: Int, yDim: Int, zDim: Int) {
   //
   // Extracting individual flag values is slow, so try to minimize your use of this function.
   def getTrueFlagIndices: Vector[Int] = shortsToIndices(data)
+
+  private def coordinatesFromBitIndex(index: Int): (Int, Int, Int) = {
+    (index % xRowSizeBits, (index / xRowSizeBits) % yDim, index / xyLayerSizeBits)
+  }
+  def getTrueFlagCoordinates: Vector[(Int, Int, Int)] = {
+
+    getTrueFlagIndices.map(coordinatesFromBitIndex)
+
+  }
 
   // Returns the bit/flag index of each true flag relative to its x-row.
   // For example, suppose an x-row is exactly 16 tiles / 1 short long. Then the first bit of
